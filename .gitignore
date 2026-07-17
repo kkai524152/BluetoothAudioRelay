@@ -1,0 +1,15 @@
+bin/
+obj/
+publish/
+_pkg/
+.agents/
+.tools/
+
+*.user
+*.suo
+*.log
+
+# Keep the lightweight installer in Git, but skip generated portable binaries.
+dist/*
+!dist/BluetoothAudioRelay-Setup-x64.exe
+
