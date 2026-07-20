@@ -32,6 +32,7 @@ internal static class Program
 public sealed class MainForm : Form
 {
     private const int DwmWindowCornerPreference = 33;
+    private const int DwmUseImmersiveDarkMode = 20;
     private const int DwmBorderColor = 34;
     private const int DwmCaptionColor = 35;
     private static readonly TimeSpan QuickReconnectSettleDelay = TimeSpan.FromMilliseconds(900);
@@ -50,10 +51,14 @@ public sealed class MainForm : Form
     private readonly Label _statusLabel;
     private readonly StatusDot _statusDot;
     private readonly TextBox _logTextBox;
+    private readonly ComboBox _themeModeComboBox;
+    private readonly ComboBox _accentComboBox;
     private readonly Icon _appIcon;
     private readonly NotifyIcon _trayIcon;
     private readonly ToolStripMenuItem _trayQuickConnectItem;
     private readonly System.Windows.Forms.Timer _deviceStatusTimer;
+    private readonly System.Windows.Forms.Timer _themeSyncTimer;
+    private readonly UserPreferences _preferences;
     private DeviceWatcher? _deviceWatcher;
     private bool _exitRequested;
     private bool _trayHintShown;
@@ -61,10 +66,15 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
+        _preferences = UserPreferencesStore.Load();
+        AppTheme.Apply(
+            ThemeResolver.ResolveDarkMode(_preferences.ThemePreference),
+            AccentPalettes.Find(_preferences.AccentKey));
+
         Text = "蓝牙音频中继 · Bluetooth Audio Relay";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(1040, 760);
-        Size = new Size(1220, 860);
+        MinimumSize = new Size(1080, 760);
+        Size = new Size(1240, 860);
         BackColor = AppTheme.Background;
         Font = new Font("Microsoft YaHei UI", 9.5F);
         DoubleBuffered = true;
@@ -80,21 +90,24 @@ public sealed class MainForm : Form
             ForeColor = AppTheme.Accent,
             Font = new Font(Font.FontFamily, 8.5F, FontStyle.Bold),
             Padding = new Padding(10, 5, 10, 5),
-            Text = "0 台"
+            Text = "0 台",
+            Tag = "accent-chip"
         };
         _selectedDeviceLabel = new Label
         {
             AutoSize = true,
             ForeColor = AppTheme.TextPrimary,
             Font = new Font(Font.FontFamily, 17F, FontStyle.Bold),
-            Text = "等待选择设备"
+            Text = "等待选择设备",
+            Tag = "primary"
         };
         _statusLabel = new Label
         {
             AutoSize = true,
             ForeColor = AppTheme.TextSecondary,
             Font = new Font(Font.FontFamily, 9.5F),
-            Text = "应用已启动，等待开始扫描设备。"
+            Text = "应用已启动，等待开始扫描设备。",
+            Tag = "secondary"
         };
         _statusDot = new StatusDot();
         _logTextBox = new TextBox
@@ -108,12 +121,19 @@ public sealed class MainForm : Form
             ForeColor = AppTheme.TextSecondary,
             Font = new Font("Cascadia Mono", 9F)
         };
+        _themeModeComboBox = BuildThemeModeComboBox();
+        _accentComboBox = BuildAccentComboBox();
 
         _deviceStatusTimer = new System.Windows.Forms.Timer
         {
             Interval = (int)DeviceStatusRefreshInterval.TotalMilliseconds
         };
         _deviceStatusTimer.Tick += async (_, _) => await RefreshDeviceStatusFromSystemAsync();
+        _themeSyncTimer = new System.Windows.Forms.Timer
+        {
+            Interval = 60_000
+        };
+        _themeSyncTimer.Tick += (_, _) => ApplyThemeFromPreferences(save: false);
 
         var trayMenu = new ContextMenuStrip
         {
@@ -140,6 +160,7 @@ public sealed class MainForm : Form
         _trayIcon.DoubleClick += (_, _) => ShowMainWindow();
 
         Controls.Add(BuildLayout());
+        ApplyThemeFromPreferences(save: false);
 
         Shown += MainForm_Shown;
         FormClosing += MainForm_FormClosing;
@@ -154,7 +175,8 @@ public sealed class MainForm : Form
             BackColor = AppTheme.Background,
             Padding = new Padding(24),
             ColumnCount = 1,
-            RowCount = 3
+            RowCount = 3,
+            Tag = "background"
         };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 148));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 64));
@@ -163,18 +185,19 @@ public sealed class MainForm : Form
         var hero = new GradientCard
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(28, 16, 28, 16),
+            Padding = new Padding(30, 18, 30, 18),
             Margin = new Padding(0, 0, 0, 18)
         };
         var heroLayout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             BackColor = Color.Transparent,
-            ColumnCount = 2,
+            ColumnCount = 3,
             RowCount = 1
         };
-        heroLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 74));
-        heroLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 26));
+        heroLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 24));
+        heroLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
+        heroLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 24));
 
         var heroText = new FlowLayoutPanel
         {
@@ -182,46 +205,71 @@ public sealed class MainForm : Form
             BackColor = Color.Transparent,
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.TopDown,
-            WrapContents = false
+            WrapContents = false,
+            Anchor = AnchorStyles.None
         };
-        heroText.Controls.Add(new Label
+        var title = new Label
         {
-            AutoSize = true,
+            AutoSize = false,
+            Width = 520,
+            Height = 48,
             BackColor = Color.Transparent,
-            ForeColor = Color.White,
-            Font = new Font(Font.FontFamily, 21F, FontStyle.Bold),
-            Text = "蓝牙音频中继"
-        });
-        heroText.Controls.Add(new Label
+            ForeColor = AppTheme.Accent,
+            Font = new Font(Font.FontFamily, 24F, FontStyle.Bold),
+            Text = "Bluetooth Audio Relay",
+            TextAlign = ContentAlignment.MiddleCenter,
+            Tag = "accent"
+        };
+        heroText.Controls.Add(title);
+        var subtitle = new Label
         {
-            AutoSize = true,
+            AutoSize = false,
+            Width = 520,
+            Height = 34,
             BackColor = Color.Transparent,
-            ForeColor = Color.FromArgb(224, 239, 255),
-            Font = new Font(Font.FontFamily, 10F),
-            Margin = new Padding(2, 3, 0, 0),
-            Text = "让手机声音经由电脑，从有线耳机自然播放。"
-        });
-        heroLayout.Controls.Add(heroText, 0, 0);
+            ForeColor = AppTheme.TextSecondary,
+            Font = new Font(Font.FontFamily, 10F, FontStyle.Italic),
+            Text = "手机音频经由电脑中继，从默认输出设备自然播放。",
+            TextAlign = ContentAlignment.MiddleCenter,
+            Tag = "secondary"
+        };
+        heroText.Controls.Add(subtitle);
+        heroLayout.Controls.Add(new System.Windows.Forms.Panel { BackColor = Color.Transparent }, 0, 0);
+        heroLayout.Controls.Add(heroText, 1, 0);
 
-        var readyChip = new RoundedPanel
+        var controlStack = new FlowLayoutPanel
         {
             Anchor = AnchorStyles.Right,
-            Size = new Size(152, 44),
+            AutoSize = true,
+            BackColor = Color.Transparent,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Margin = new Padding(0)
+        };
+        var readyChip = new RoundedPanel
+        {
+            Size = new Size(150, 40),
             CornerRadius = 18,
-            FillColor = Color.FromArgb(225, 245, 255),
-            BorderColor = Color.FromArgb(220, 255, 255, 255),
-            Padding = new Padding(10)
+            ThemeRole = "accent-soft",
+            Padding = new Padding(10),
+            Margin = new Padding(0, 0, 0, 8)
         };
         readyChip.Controls.Add(new Label
         {
             Dock = DockStyle.Fill,
             BackColor = Color.Transparent,
-            ForeColor = Color.FromArgb(20, 74, 125),
+            ForeColor = AppTheme.AccentText,
             Font = new Font(Font.FontFamily, 9F, FontStyle.Bold),
             TextAlign = ContentAlignment.MiddleCenter,
-            Text = "接收端已就绪"
+            Text = "接收端已就绪",
+            Tag = "accent-text"
         });
-        heroLayout.Controls.Add(readyChip, 1, 0);
+        controlStack.Controls.Add(readyChip);
+        _themeModeComboBox.Margin = new Padding(0, 0, 0, 7);
+        _accentComboBox.Margin = new Padding(0);
+        controlStack.Controls.Add(_themeModeComboBox);
+        controlStack.Controls.Add(_accentComboBox);
+        heroLayout.Controls.Add(controlStack, 2, 0);
         hero.Controls.Add(heroLayout);
         root.Controls.Add(hero, 0, 0);
 
@@ -231,7 +279,8 @@ public sealed class MainForm : Form
             BackColor = AppTheme.Background,
             ColumnCount = 2,
             RowCount = 1,
-            Margin = new Padding(0, 0, 0, 18)
+            Margin = new Padding(0, 0, 0, 18),
+            Tag = "background"
         };
         mainArea.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 64));
         mainArea.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36));
@@ -252,7 +301,8 @@ public sealed class MainForm : Form
             BorderColor = AppTheme.Border,
             CornerRadius = 24,
             Padding = new Padding(20),
-            Margin = new Padding(0, 0, 9, 0)
+            Margin = new Padding(0, 0, 9, 0),
+            ThemeRole = "surface"
         };
 
         var layout = new TableLayoutPanel
@@ -291,7 +341,8 @@ public sealed class MainForm : Form
             ForeColor = AppTheme.TextPrimary,
             Font = new Font(Font.FontFamily, 13F, FontStyle.Bold),
             Margin = new Padding(0, 7, 10, 0),
-            Text = "可用设备"
+            Text = "可用设备",
+            Tag = "primary"
         });
         titleRow.Controls.Add(_deviceCountLabel);
         header.Controls.Add(titleRow, 0, 0);
@@ -316,7 +367,8 @@ public sealed class MainForm : Form
             BorderColor = AppTheme.Border,
             CornerRadius = 24,
             Padding = new Padding(22),
-            Margin = new Padding(9, 0, 0, 0)
+            Margin = new Padding(9, 0, 0, 0),
+            ThemeRole = "surface"
         };
 
         var layout = new TableLayoutPanel
@@ -340,7 +392,8 @@ public sealed class MainForm : Form
             BackColor = Color.Transparent,
             ForeColor = AppTheme.TextSecondary,
             Font = new Font(Font.FontFamily, 8.5F, FontStyle.Bold),
-            Text = "当前设备"
+            Text = "当前设备",
+            Tag = "secondary"
         }, 0, 0);
 
         _selectedDeviceLabel.Margin = new Padding(0, 8, 0, 14);
@@ -353,7 +406,8 @@ public sealed class MainForm : Form
             BorderColor = AppTheme.Border,
             CornerRadius = 16,
             Padding = new Padding(16, 13, 16, 13),
-            Margin = new Padding(0, 0, 0, 14)
+            Margin = new Padding(0, 0, 0, 14),
+            ThemeRole = "surface-soft"
         };
         var statusLayout = new TableLayoutPanel
         {
@@ -379,7 +433,8 @@ public sealed class MainForm : Form
             BackColor = Color.Transparent,
             ForeColor = AppTheme.TextSecondary,
             TextAlign = ContentAlignment.MiddleLeft,
-            Text = "连接后，手机声音将从电脑播放。"
+            Text = "连接后，手机声音将从电脑播放。",
+            Tag = "secondary"
         }, 0, 3);
 
         var connectButton = CreateButton("快速连接", QuickConnectButton_Click, primary: true);
@@ -399,7 +454,8 @@ public sealed class MainForm : Form
             ForeColor = Color.FromArgb(126, 142, 163),
             Font = new Font(Font.FontFamily, 8F),
             Margin = new Padding(0, 10, 0, 0),
-            Text = "蓝牙已配对 · Windows 默认输出已设置"
+            Text = "蓝牙已配对 · Windows 默认输出已设置",
+            Tag = "muted"
         }, 0, 6);
 
         card.Controls.Add(layout);
@@ -415,7 +471,8 @@ public sealed class MainForm : Form
             BorderColor = AppTheme.Border,
             CornerRadius = 24,
             Padding = new Padding(20),
-            Margin = new Padding(0)
+            Margin = new Padding(0),
+            ThemeRole = "surface"
         };
 
         var layout = new TableLayoutPanel
@@ -433,7 +490,8 @@ public sealed class MainForm : Form
             BackColor = Color.Transparent,
             ForeColor = AppTheme.TextPrimary,
             Font = new Font(Font.FontFamily, 11F, FontStyle.Bold),
-            Text = "运行记录"
+            Text = "运行记录",
+            Tag = "primary"
         }, 0, 0);
 
         var logHost = new RoundedPanel
@@ -442,7 +500,8 @@ public sealed class MainForm : Form
             FillColor = AppTheme.SurfaceSoft,
             BorderColor = AppTheme.Border,
             CornerRadius = 14,
-            Padding = new Padding(14, 10, 8, 10)
+            Padding = new Padding(14, 10, 8, 10),
+            ThemeRole = "surface-soft"
         };
         logHost.Controls.Add(_logTextBox);
         layout.Controls.Add(logHost, 0, 1);
@@ -519,6 +578,64 @@ public sealed class MainForm : Form
         return grid;
     }
 
+    private ComboBox BuildThemeModeComboBox()
+    {
+        var comboBox = BuildThemeComboBox();
+        comboBox.Items.AddRange(["跟随 Windows", "日出日落", "浅色", "深色"]);
+        comboBox.SelectedIndex = _preferences.ThemePreference switch
+        {
+            ThemePreference.SunCycle => 1,
+            ThemePreference.Light => 2,
+            ThemePreference.Dark => 3,
+            _ => 0
+        };
+        comboBox.SelectedIndexChanged += (_, _) =>
+        {
+            _preferences.ThemePreference = comboBox.SelectedIndex switch
+            {
+                1 => ThemePreference.SunCycle,
+                2 => ThemePreference.Light,
+                3 => ThemePreference.Dark,
+                _ => ThemePreference.System
+            };
+            ApplyThemeFromPreferences();
+        };
+        return comboBox;
+    }
+
+    private ComboBox BuildAccentComboBox()
+    {
+        var comboBox = BuildThemeComboBox();
+        comboBox.Items.AddRange(AccentPalettes.All.Select(item => item.DisplayName).ToArray());
+        var selectedIndex = Array.FindIndex(
+            AccentPalettes.All,
+            item => item.Key.Equals(_preferences.AccentKey, StringComparison.OrdinalIgnoreCase));
+        comboBox.SelectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
+        comboBox.SelectedIndexChanged += (_, _) =>
+        {
+            if (comboBox.SelectedIndex >= 0 && comboBox.SelectedIndex < AccentPalettes.All.Length)
+            {
+                _preferences.AccentKey = AccentPalettes.All[comboBox.SelectedIndex].Key;
+                ApplyThemeFromPreferences();
+            }
+        };
+        return comboBox;
+    }
+
+    private static ComboBox BuildThemeComboBox()
+    {
+        return new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            FlatStyle = FlatStyle.Flat,
+            Width = 150,
+            Height = 32,
+            Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
+            BackColor = AppTheme.SurfaceSoft,
+            ForeColor = AppTheme.TextPrimary
+        };
+    }
+
     private static ModernButton CreateButton(string text, EventHandler onClick, bool primary = false)
     {
         var button = new ModernButton
@@ -530,17 +647,121 @@ public sealed class MainForm : Form
         return button;
     }
 
+    private void ApplyThemeFromPreferences(bool save = true)
+    {
+        AppTheme.Apply(
+            ThemeResolver.ResolveDarkMode(_preferences.ThemePreference),
+            AccentPalettes.Find(_preferences.AccentKey));
+
+        if (save)
+        {
+            UserPreferencesStore.Save(_preferences);
+        }
+
+        BackColor = AppTheme.Background;
+        ApplyWindowChrome();
+        ApplyThemeToControl(this);
+        ConfigureDevicesGridTheme();
+        Invalidate(true);
+    }
+
+    private void ApplyThemeToControl(Control control)
+    {
+        if (Equals(control.Tag, "background"))
+        {
+            control.BackColor = AppTheme.Background;
+        }
+
+        switch (control)
+        {
+            case RoundedPanel roundedPanel:
+                roundedPanel.FillColor = roundedPanel.ThemeRole switch
+                {
+                    "shell" => AppTheme.Shell,
+                    "surface-soft" => AppTheme.SurfaceSoft,
+                    "accent-soft" => AppTheme.AccentSoft,
+                    _ => AppTheme.Surface
+                };
+                roundedPanel.BorderColor = AppTheme.Border;
+                roundedPanel.Invalidate();
+                break;
+            case GradientCard gradientCard:
+                gradientCard.Invalidate();
+                break;
+            case ModernButton modernButton:
+                modernButton.Invalidate();
+                break;
+            case ComboBox comboBox:
+                comboBox.BackColor = AppTheme.SurfaceSoft;
+                comboBox.ForeColor = AppTheme.TextPrimary;
+                break;
+            case TextBox textBox:
+                textBox.BackColor = AppTheme.SurfaceSoft;
+                textBox.ForeColor = AppTheme.TextSecondary;
+                break;
+            case Label label:
+                label.ForeColor = label.Tag switch
+                {
+                    "accent" => AppTheme.Accent,
+                    "accent-text" => AppTheme.AccentText,
+                    "secondary" => AppTheme.TextSecondary,
+                    "muted" => AppTheme.TextMuted,
+                    "on-accent" => Color.White,
+                    "accent-chip" => AppTheme.Accent,
+                    _ => AppTheme.TextPrimary
+                };
+
+                if (Equals(label.Tag, "accent-chip"))
+                {
+                    label.BackColor = AppTheme.AccentSoft;
+                }
+
+                break;
+            case DataGridView:
+                ConfigureDevicesGridTheme();
+                break;
+        }
+
+        foreach (Control child in control.Controls)
+        {
+            ApplyThemeToControl(child);
+        }
+    }
+
+    private void ConfigureDevicesGridTheme()
+    {
+        _devicesGrid.BackgroundColor = AppTheme.Surface;
+        _devicesGrid.GridColor = AppTheme.Border;
+        _devicesGrid.ColumnHeadersDefaultCellStyle.BackColor = AppTheme.SurfaceSoft;
+        _devicesGrid.ColumnHeadersDefaultCellStyle.ForeColor = AppTheme.TextSecondary;
+        _devicesGrid.ColumnHeadersDefaultCellStyle.SelectionBackColor = AppTheme.SurfaceSoft;
+        _devicesGrid.ColumnHeadersDefaultCellStyle.SelectionForeColor = AppTheme.TextSecondary;
+        _devicesGrid.DefaultCellStyle.BackColor = AppTheme.Surface;
+        _devicesGrid.DefaultCellStyle.ForeColor = AppTheme.TextPrimary;
+        _devicesGrid.DefaultCellStyle.SelectionBackColor = AppTheme.AccentSoft;
+        _devicesGrid.DefaultCellStyle.SelectionForeColor = AppTheme.TextPrimary;
+        _devicesGrid.RowsDefaultCellStyle.BackColor = AppTheme.Surface;
+        _devicesGrid.AlternatingRowsDefaultCellStyle.BackColor = AppTheme.Surface;
+        _devicesGrid.Invalidate();
+    }
+
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        ApplyWindowChrome();
+    }
 
-        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+    private void ApplyWindowChrome()
+    {
+        if (!IsHandleCreated || !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
         {
             return;
         }
 
         var cornerPreference = 2;
         DwmSetWindowAttribute(Handle, DwmWindowCornerPreference, ref cornerPreference, sizeof(int));
+        var darkMode = AppTheme.IsDark ? 1 : 0;
+        DwmSetWindowAttribute(Handle, DwmUseImmersiveDarkMode, ref darkMode, sizeof(int));
 
         var borderColor = ColorTranslator.ToWin32(AppTheme.Border);
         var captionColor = ColorTranslator.ToWin32(AppTheme.Background);
@@ -555,6 +776,7 @@ public sealed class MainForm : Form
     {
         StartDeviceWatcher();
         _deviceStatusTimer.Start();
+        _themeSyncTimer.Start();
     }
 
     private void MainForm_FormClosing(object? sender, FormClosingEventArgs e)
@@ -638,6 +860,8 @@ public sealed class MainForm : Form
     {
         _deviceStatusTimer.Stop();
         _deviceStatusTimer.Dispose();
+        _themeSyncTimer.Stop();
+        _themeSyncTimer.Dispose();
         StopDeviceWatcher();
 
         foreach (var deviceId in _connections.Keys.ToList())

@@ -5,19 +5,69 @@ namespace BluetoothAudioRelay;
 
 internal static class AppTheme
 {
-    public static readonly Color Background = Color.FromArgb(244, 247, 251);
-    public static readonly Color Surface = Color.White;
-    public static readonly Color SurfaceSoft = Color.FromArgb(248, 250, 253);
-    public static readonly Color Border = Color.FromArgb(226, 232, 240);
-    public static readonly Color TextPrimary = Color.FromArgb(28, 39, 55);
-    public static readonly Color TextSecondary = Color.FromArgb(100, 116, 139);
-    public static readonly Color Accent = Color.FromArgb(36, 107, 253);
-    public static readonly Color AccentHover = Color.FromArgb(27, 88, 218);
-    public static readonly Color AccentSoft = Color.FromArgb(232, 240, 255);
-    public static readonly Color Teal = Color.FromArgb(13, 148, 136);
-    public static readonly Color Success = Color.FromArgb(22, 163, 74);
-    public static readonly Color Warning = Color.FromArgb(217, 119, 6);
-    public static readonly Color Danger = Color.FromArgb(220, 38, 38);
+    public static Color Background { get; private set; } = Color.FromArgb(210, 239, 230);
+    public static Color Shell { get; private set; } = Color.FromArgb(235, 249, 244);
+    public static Color Surface { get; private set; } = Color.FromArgb(242, 252, 248);
+    public static Color SurfaceSoft { get; private set; } = Color.FromArgb(248, 255, 252);
+    public static Color Border { get; private set; } = Color.FromArgb(199, 224, 216);
+    public static Color TextPrimary { get; private set; } = Color.FromArgb(35, 53, 68);
+    public static Color TextSecondary { get; private set; } = Color.FromArgb(119, 137, 136);
+    public static Color TextMuted { get; private set; } = Color.FromArgb(146, 164, 160);
+    public static Color Accent { get; private set; } = Color.FromArgb(29, 188, 163);
+    public static Color AccentHover { get; private set; } = Color.FromArgb(21, 166, 144);
+    public static Color AccentSoft { get; private set; } = Color.FromArgb(212, 245, 237);
+    public static Color AccentText { get; private set; } = Color.FromArgb(8, 102, 89);
+    public static Color Success { get; private set; } = Color.FromArgb(22, 163, 74);
+    public static Color Warning { get; private set; } = Color.FromArgb(217, 119, 6);
+    public static Color Danger { get; private set; } = Color.FromArgb(220, 38, 38);
+    public static bool IsDark { get; private set; }
+
+    public static void Apply(bool isDark, AccentPalette accent)
+    {
+        IsDark = isDark;
+        Accent = accent.Primary;
+        AccentHover = accent.Hover;
+        AccentSoft = isDark ? Blend(accent.Primary, Color.FromArgb(24, 34, 32), 0.20) : Blend(accent.Primary, Color.White, 0.18);
+        AccentText = isDark ? Blend(accent.Primary, Color.White, 0.72) : Blend(accent.Primary, Color.Black, 0.70);
+
+        if (isDark)
+        {
+            Background = Color.FromArgb(8, 45, 39);
+            Shell = Color.FromArgb(20, 33, 30);
+            Surface = Color.FromArgb(31, 40, 37);
+            SurfaceSoft = Color.FromArgb(15, 22, 20);
+            Border = Color.FromArgb(68, 82, 77);
+            TextPrimary = Color.FromArgb(233, 242, 239);
+            TextSecondary = Color.FromArgb(164, 181, 177);
+            TextMuted = Color.FromArgb(126, 144, 140);
+            Success = Color.FromArgb(74, 222, 128);
+            Warning = Color.FromArgb(251, 191, 36);
+            Danger = Color.FromArgb(248, 113, 113);
+            return;
+        }
+
+        Background = Color.FromArgb(198, 235, 224);
+        Shell = Color.FromArgb(235, 249, 244);
+        Surface = Color.FromArgb(242, 252, 248);
+        SurfaceSoft = Color.FromArgb(248, 255, 252);
+        Border = Color.FromArgb(199, 224, 216);
+        TextPrimary = Color.FromArgb(35, 53, 68);
+        TextSecondary = Color.FromArgb(119, 137, 136);
+        TextMuted = Color.FromArgb(146, 164, 160);
+        Success = Color.FromArgb(22, 163, 74);
+        Warning = Color.FromArgb(217, 119, 6);
+        Danger = Color.FromArgb(220, 38, 38);
+    }
+
+    public static Color Blend(Color foreground, Color background, double amount)
+    {
+        amount = Math.Clamp(amount, 0, 1);
+        var inverse = 1 - amount;
+        return Color.FromArgb(
+            (int)(foreground.R * amount + background.R * inverse),
+            (int)(foreground.G * amount + background.G * inverse),
+            (int)(foreground.B * amount + background.B * inverse));
+    }
 
     public static Color ResolveBackground(Control? control)
     {
@@ -31,7 +81,7 @@ internal static class AppTheme
 
             if (current is GradientCard)
             {
-                return Teal;
+                return Accent;
             }
 
             if (current.BackColor.A > 0)
@@ -43,6 +93,28 @@ internal static class AppTheme
         }
 
         return Background;
+    }
+}
+
+internal sealed record AccentPalette(string Key, string DisplayName, Color Primary, Color Hover);
+
+internal static class AccentPalettes
+{
+    public static readonly AccentPalette[] All =
+    [
+        new("emerald", "翡翠绿", Color.FromArgb(29, 188, 163), Color.FromArgb(21, 166, 144)),
+        new("sky", "天空蓝", Color.FromArgb(14, 165, 233), Color.FromArgb(2, 132, 199)),
+        new("indigo", "靛蓝", Color.FromArgb(99, 102, 241), Color.FromArgb(79, 70, 229)),
+        new("rose", "玫瑰红", Color.FromArgb(244, 63, 94), Color.FromArgb(225, 29, 72)),
+        new("amber", "琥珀橙", Color.FromArgb(245, 158, 11), Color.FromArgb(217, 119, 6)),
+        new("slate", "石板灰", Color.FromArgb(71, 85, 105), Color.FromArgb(51, 65, 85))
+    ];
+
+    public static AccentPalette Default => All[0];
+
+    public static AccentPalette Find(string? key)
+    {
+        return All.FirstOrDefault(item => item.Key.Equals(key, StringComparison.OrdinalIgnoreCase)) ?? Default;
     }
 }
 
@@ -98,6 +170,8 @@ internal sealed class RoundedPanel : Panel
 
     public int BorderWidth { get; set; } = 1;
 
+    public string ThemeRole { get; set; } = "surface";
+
     protected override void OnResize(EventArgs eventargs)
     {
         base.OnResize(eventargs);
@@ -111,12 +185,21 @@ internal sealed class RoundedPanel : Panel
 
         var bounds = new Rectangle(0, 0, Width - 1, Height - 1);
         using var path = RoundedGeometry.CreatePath(bounds, CornerRadius);
-        using var fill = new SolidBrush(FillColor);
+        var themedFill = ThemeRole switch
+        {
+            "shell" => AppTheme.Shell,
+            "surface-soft" => AppTheme.SurfaceSoft,
+            "accent-soft" => AppTheme.AccentSoft,
+            _ => FillColor
+        };
+        var themedBorder = ThemeRole == "accent-soft" ? AppTheme.Blend(AppTheme.Accent, AppTheme.Border, 0.28) : BorderColor;
+
+        using var fill = new SolidBrush(themedFill);
         e.Graphics.FillPath(fill, path);
 
         if (BorderWidth > 0)
         {
-            using var pen = new Pen(BorderColor, BorderWidth);
+            using var pen = new Pen(themedBorder, BorderWidth);
             e.Graphics.DrawPath(pen, path);
         }
     }
@@ -164,10 +247,17 @@ internal sealed class GradientCard : Panel
         using var path = RoundedGeometry.CreatePath(bounds, CornerRadius);
         using var brush = new LinearGradientBrush(
             bounds,
-            Color.FromArgb(33, 91, 236),
-            Color.FromArgb(13, 148, 136),
+            AppTheme.IsDark ? AppTheme.Shell : Color.FromArgb(229, 247, 240),
+            AppTheme.IsDark ? Color.FromArgb(17, 51, 45) : Color.FromArgb(214, 242, 233),
             LinearGradientMode.Horizontal);
         e.Graphics.FillPath(brush, path);
+
+        using var accentGlow = new LinearGradientBrush(
+            bounds,
+            Color.FromArgb(AppTheme.IsDark ? 60 : 42, AppTheme.Accent),
+            Color.FromArgb(0, AppTheme.Accent),
+            LinearGradientMode.ForwardDiagonal);
+        e.Graphics.FillPath(accentGlow, path);
     }
 }
 
@@ -245,12 +335,12 @@ internal sealed class ModernButton : Button
 
         if (_pressed)
         {
-            fillColor = Primary ? Color.FromArgb(22, 72, 182) : Color.FromArgb(226, 232, 240);
+            fillColor = Primary ? AppTheme.AccentHover : AppTheme.Blend(AppTheme.Border, AppTheme.SurfaceSoft, 0.40);
         }
         else if (_hovered)
         {
             fillColor = Primary ? AppTheme.AccentHover : AppTheme.AccentSoft;
-            borderColor = Primary ? AppTheme.AccentHover : Color.FromArgb(190, 207, 235);
+            borderColor = Primary ? AppTheme.AccentHover : AppTheme.Blend(AppTheme.Accent, AppTheme.Border, 0.35);
         }
 
         var bounds = new Rectangle(0, 0, Width - 1, Height - 1);
@@ -285,7 +375,7 @@ internal static class TrayIconFactory
         using var background = new LinearGradientBrush(
             bounds,
             AppTheme.Accent,
-            AppTheme.Teal,
+            AppTheme.AccentHover,
             LinearGradientMode.ForwardDiagonal);
         graphics.FillPath(background, path);
 
