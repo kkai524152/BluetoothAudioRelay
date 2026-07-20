@@ -50,9 +50,9 @@ public sealed class MainForm : Form
     private readonly Label _selectedDeviceLabel;
     private readonly Label _statusLabel;
     private readonly StatusDot _statusDot;
-    private readonly TextBox _logTextBox;
-    private readonly ComboBox _themeModeComboBox;
-    private readonly ComboBox _accentComboBox;
+    private readonly ThemedLogBox _logTextBox;
+    private readonly ThemedSelectButton _themeModeButton;
+    private readonly ThemedSelectButton _accentButton;
     private readonly Icon _appIcon;
     private readonly NotifyIcon _trayIcon;
     private readonly ToolStripMenuItem _trayQuickConnectItem;
@@ -103,26 +103,21 @@ public sealed class MainForm : Form
         };
         _statusLabel = new Label
         {
-            AutoSize = true,
+            AutoSize = false,
+            AutoEllipsis = true,
             ForeColor = AppTheme.TextSecondary,
             Font = new Font(Font.FontFamily, 9.5F),
             Text = "应用已启动，等待开始扫描设备。",
             Tag = "secondary"
         };
         _statusDot = new StatusDot();
-        _logTextBox = new TextBox
+        _logTextBox = new ThemedLogBox
         {
-            Multiline = true,
-            ReadOnly = true,
-            ScrollBars = ScrollBars.Vertical,
             Dock = DockStyle.Fill,
-            BorderStyle = BorderStyle.None,
-            BackColor = AppTheme.SurfaceSoft,
-            ForeColor = AppTheme.TextSecondary,
             Font = new Font("Cascadia Mono", 9F)
         };
-        _themeModeComboBox = BuildThemeModeComboBox();
-        _accentComboBox = BuildAccentComboBox();
+        _themeModeButton = BuildThemeModeButton();
+        _accentButton = BuildAccentButton();
 
         _deviceStatusTimer = new System.Windows.Forms.Timer
         {
@@ -178,54 +173,52 @@ public sealed class MainForm : Form
             RowCount = 3,
             Tag = "background"
         };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 148));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 190));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 64));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 36));
 
         var hero = new GradientCard
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(30, 18, 30, 18),
+            Padding = new Padding(30, 14, 30, 14),
             Margin = new Padding(0, 0, 0, 18)
         };
         var heroLayout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             BackColor = Color.Transparent,
-            ColumnCount = 3,
-            RowCount = 1
+            ColumnCount = 1,
+            RowCount = 2
         };
-        heroLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 24));
-        heroLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
-        heroLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 24));
+        heroLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
+        heroLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-        var heroText = new FlowLayoutPanel
+        var heroText = new TableLayoutPanel
         {
-            AutoSize = false,
             BackColor = Color.Transparent,
             Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            Anchor = AnchorStyles.None
+            ColumnCount = 1,
+            RowCount = 2,
+            Margin = new Padding(0)
         };
+        heroText.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+        heroText.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
         var title = new Label
         {
             AutoSize = false,
-            Width = 520,
-            Height = 48,
+            Dock = DockStyle.Fill,
             BackColor = Color.Transparent,
             ForeColor = AppTheme.Accent,
-            Font = new Font(Font.FontFamily, 24F, FontStyle.Bold),
+            Font = new Font(Font.FontFamily, 23F, FontStyle.Bold),
             Text = "Bluetooth Audio Relay",
             TextAlign = ContentAlignment.MiddleCenter,
             Tag = "accent"
         };
-        heroText.Controls.Add(title);
+        heroText.Controls.Add(title, 0, 0);
         var subtitle = new Label
         {
             AutoSize = false,
-            Width = 520,
-            Height = 34,
+            Dock = DockStyle.Fill,
             BackColor = Color.Transparent,
             ForeColor = AppTheme.TextSecondary,
             Font = new Font(Font.FontFamily, 10F, FontStyle.Italic),
@@ -233,26 +226,24 @@ public sealed class MainForm : Form
             TextAlign = ContentAlignment.MiddleCenter,
             Tag = "secondary"
         };
-        heroText.Controls.Add(subtitle);
-        heroLayout.Controls.Add(new System.Windows.Forms.Panel { BackColor = Color.Transparent }, 0, 0);
-        heroLayout.Controls.Add(heroText, 1, 0);
-
-        var controlStack = new FlowLayoutPanel
+        heroText.Controls.Add(subtitle, 0, 1);
+        var settingsRail = new RoundedPanel
         {
-            Anchor = AnchorStyles.Right,
-            AutoSize = true,
-            BackColor = Color.Transparent,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
+            Size = new Size(570, 50),
+            Anchor = AnchorStyles.Top,
+            CornerRadius = 20,
+            ThemeRole = "surface-soft",
+            BorderWidth = 0,
+            Padding = new Padding(8, 7, 8, 7),
             Margin = new Padding(0)
         };
         var readyChip = new RoundedPanel
         {
-            Size = new Size(150, 40),
+            Size = new Size(184, 36),
             CornerRadius = 18,
             ThemeRole = "accent-soft",
-            Padding = new Padding(10),
-            Margin = new Padding(0, 0, 0, 8)
+            Padding = new Padding(14, 0, 14, 0),
+            Margin = new Padding(0, 0, 12, 0)
         };
         readyChip.Controls.Add(new Label
         {
@@ -260,16 +251,31 @@ public sealed class MainForm : Form
             BackColor = Color.Transparent,
             ForeColor = AppTheme.AccentText,
             Font = new Font(Font.FontFamily, 9F, FontStyle.Bold),
+            UseCompatibleTextRendering = false,
             TextAlign = ContentAlignment.MiddleCenter,
             Text = "接收端已就绪",
             Tag = "accent-text"
         });
-        controlStack.Controls.Add(readyChip);
-        _themeModeComboBox.Margin = new Padding(0, 0, 0, 7);
-        _accentComboBox.Margin = new Padding(0);
-        controlStack.Controls.Add(_themeModeComboBox);
-        controlStack.Controls.Add(_accentComboBox);
-        heroLayout.Controls.Add(controlStack, 2, 0);
+        var selectRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.Transparent,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Padding = new Padding(0),
+            Margin = new Padding(0)
+        };
+        _themeModeButton.Size = new Size(184, 36);
+        _accentButton.Size = new Size(158, 36);
+        _themeModeButton.Margin = new Padding(0, 0, 12, 0);
+        _accentButton.Margin = new Padding(0);
+        selectRow.Controls.Add(readyChip);
+        selectRow.Controls.Add(_themeModeButton);
+        selectRow.Controls.Add(_accentButton);
+        settingsRail.Controls.Add(selectRow);
+
+        heroLayout.Controls.Add(heroText, 0, 0);
+        heroLayout.Controls.Add(settingsRail, 0, 1);
         hero.Controls.Add(heroLayout);
         root.Controls.Add(hero, 0, 0);
 
@@ -380,11 +386,11 @@ public sealed class MainForm : Form
         };
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 66));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         layout.Controls.Add(new Label
         {
@@ -405,8 +411,8 @@ public sealed class MainForm : Form
             FillColor = AppTheme.SurfaceSoft,
             BorderColor = AppTheme.Border,
             CornerRadius = 16,
-            Padding = new Padding(16, 13, 16, 13),
-            Margin = new Padding(0, 0, 0, 14),
+            Padding = new Padding(16, 8, 16, 8),
+            Margin = new Padding(0, 0, 0, 10),
             ThemeRole = "surface-soft"
         };
         var statusLayout = new TableLayoutPanel
@@ -433,6 +439,7 @@ public sealed class MainForm : Form
             BackColor = Color.Transparent,
             ForeColor = AppTheme.TextSecondary,
             TextAlign = ContentAlignment.MiddleLeft,
+            AutoEllipsis = true,
             Text = "连接后，手机声音将从电脑播放。",
             Tag = "secondary"
         }, 0, 3);
@@ -449,7 +456,9 @@ public sealed class MainForm : Form
 
         layout.Controls.Add(new Label
         {
-            AutoSize = true,
+            AutoSize = false,
+            Dock = DockStyle.Top,
+            Height = 24,
             BackColor = Color.Transparent,
             ForeColor = Color.FromArgb(126, 142, 163),
             Font = new Font(Font.FontFamily, 8F),
@@ -549,9 +558,13 @@ public sealed class MainForm : Form
             ForeColor = AppTheme.TextPrimary,
             Font = new Font(Font.FontFamily, 10F),
             Padding = new Padding(10, 0, 10, 0),
-            SelectionBackColor = AppTheme.AccentSoft,
+            SelectionBackColor = AppTheme.SelectedRow,
             SelectionForeColor = AppTheme.TextPrimary
         };
+        grid.RowsDefaultCellStyle.SelectionBackColor = AppTheme.SelectedRow;
+        grid.RowsDefaultCellStyle.SelectionForeColor = AppTheme.TextPrimary;
+        grid.AlternatingRowsDefaultCellStyle.SelectionBackColor = AppTheme.SelectedRow;
+        grid.AlternatingRowsDefaultCellStyle.SelectionForeColor = AppTheme.TextPrimary;
         grid.RowTemplate.Height = 56;
 
         grid.Columns.Add(new DataGridViewTextBoxColumn
@@ -578,61 +591,90 @@ public sealed class MainForm : Form
         return grid;
     }
 
-    private ComboBox BuildThemeModeComboBox()
+    private ThemedSelectButton BuildThemeModeButton()
     {
-        var comboBox = BuildThemeComboBox();
-        comboBox.Items.AddRange(["跟随 Windows", "日出日落", "浅色", "深色"]);
-        comboBox.SelectedIndex = _preferences.ThemePreference switch
+        var button = BuildSelectButton(GetThemePreferenceText());
+        button.Click += (_, _) =>
         {
-            ThemePreference.SunCycle => 1,
-            ThemePreference.Light => 2,
-            ThemePreference.Dark => 3,
-            _ => 0
+            var menu = BuildThemedMenu();
+            AddThemeMenuItem(menu, "跟随 Windows", ThemePreference.System);
+            AddThemeMenuItem(menu, "日出日落", ThemePreference.SunCycle);
+            AddThemeMenuItem(menu, "浅色", ThemePreference.Light);
+            AddThemeMenuItem(menu, "深色", ThemePreference.Dark);
+            menu.Show(button, new Point(0, button.Height + 4));
         };
-        comboBox.SelectedIndexChanged += (_, _) =>
+        return button;
+    }
+
+    private ThemedSelectButton BuildAccentButton()
+    {
+        var button = BuildSelectButton(AccentPalettes.Find(_preferences.AccentKey).DisplayName);
+        button.Click += (_, _) =>
         {
-            _preferences.ThemePreference = comboBox.SelectedIndex switch
+            var menu = BuildThemedMenu();
+            foreach (var palette in AccentPalettes.All)
             {
-                1 => ThemePreference.SunCycle,
-                2 => ThemePreference.Light,
-                3 => ThemePreference.Dark,
-                _ => ThemePreference.System
-            };
+                var item = new ToolStripMenuItem(palette.DisplayName)
+                {
+                    Checked = palette.Key.Equals(_preferences.AccentKey, StringComparison.OrdinalIgnoreCase)
+                };
+                item.Click += (_, _) =>
+                {
+                    _preferences.AccentKey = palette.Key;
+                    ApplyThemeFromPreferences();
+                };
+                menu.Items.Add(item);
+            }
+
+            menu.Show(button, new Point(0, button.Height + 4));
+        };
+        return button;
+    }
+
+    private static ThemedSelectButton BuildSelectButton(string text)
+    {
+        return new ThemedSelectButton
+        {
+            Text = text,
+            Size = new Size(150, 30)
+        };
+    }
+
+    private void AddThemeMenuItem(ContextMenuStrip menu, string text, ThemePreference preference)
+    {
+        var item = new ToolStripMenuItem(text)
+        {
+            Checked = _preferences.ThemePreference == preference
+        };
+        item.Click += (_, _) =>
+        {
+            _preferences.ThemePreference = preference;
             ApplyThemeFromPreferences();
         };
-        return comboBox;
+        menu.Items.Add(item);
     }
 
-    private ComboBox BuildAccentComboBox()
+    private static ContextMenuStrip BuildThemedMenu()
     {
-        var comboBox = BuildThemeComboBox();
-        comboBox.Items.AddRange(AccentPalettes.All.Select(item => item.DisplayName).ToArray());
-        var selectedIndex = Array.FindIndex(
-            AccentPalettes.All,
-            item => item.Key.Equals(_preferences.AccentKey, StringComparison.OrdinalIgnoreCase));
-        comboBox.SelectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
-        comboBox.SelectedIndexChanged += (_, _) =>
+        var menu = new ContextMenuStrip
         {
-            if (comboBox.SelectedIndex >= 0 && comboBox.SelectedIndex < AccentPalettes.All.Length)
-            {
-                _preferences.AccentKey = AccentPalettes.All[comboBox.SelectedIndex].Key;
-                ApplyThemeFromPreferences();
-            }
+            Font = new Font("Microsoft YaHei UI", 9F),
+            BackColor = AppTheme.Surface,
+            ForeColor = AppTheme.TextPrimary,
+            ShowImageMargin = false,
+            Renderer = new ToolStripProfessionalRenderer(new ThemedMenuColorTable())
         };
-        return comboBox;
+        return menu;
     }
 
-    private static ComboBox BuildThemeComboBox()
+    private string GetThemePreferenceText()
     {
-        return new ComboBox
+        return _preferences.ThemePreference switch
         {
-            DropDownStyle = ComboBoxStyle.DropDownList,
-            FlatStyle = FlatStyle.Flat,
-            Width = 150,
-            Height = 32,
-            Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
-            BackColor = AppTheme.SurfaceSoft,
-            ForeColor = AppTheme.TextPrimary
+            ThemePreference.SunCycle => "日出日落",
+            ThemePreference.Light => "浅色",
+            ThemePreference.Dark => "深色",
+            _ => "跟随 Windows"
         };
     }
 
@@ -658,6 +700,8 @@ public sealed class MainForm : Form
             UserPreferencesStore.Save(_preferences);
         }
 
+        _themeModeButton.Text = GetThemePreferenceText();
+        _accentButton.Text = AccentPalettes.Find(_preferences.AccentKey).DisplayName;
         BackColor = AppTheme.Background;
         ApplyWindowChrome();
         ApplyThemeToControl(this);
@@ -691,13 +735,11 @@ public sealed class MainForm : Form
             case ModernButton modernButton:
                 modernButton.Invalidate();
                 break;
-            case ComboBox comboBox:
-                comboBox.BackColor = AppTheme.SurfaceSoft;
-                comboBox.ForeColor = AppTheme.TextPrimary;
+            case ThemedSelectButton selectButton:
+                selectButton.Invalidate();
                 break;
-            case TextBox textBox:
-                textBox.BackColor = AppTheme.SurfaceSoft;
-                textBox.ForeColor = AppTheme.TextSecondary;
+            case ThemedLogBox logBox:
+                logBox.Invalidate();
                 break;
             case Label label:
                 label.ForeColor = label.Tag switch
@@ -738,10 +780,22 @@ public sealed class MainForm : Form
         _devicesGrid.ColumnHeadersDefaultCellStyle.SelectionForeColor = AppTheme.TextSecondary;
         _devicesGrid.DefaultCellStyle.BackColor = AppTheme.Surface;
         _devicesGrid.DefaultCellStyle.ForeColor = AppTheme.TextPrimary;
-        _devicesGrid.DefaultCellStyle.SelectionBackColor = AppTheme.AccentSoft;
+        _devicesGrid.DefaultCellStyle.SelectionBackColor = AppTheme.SelectedRow;
         _devicesGrid.DefaultCellStyle.SelectionForeColor = AppTheme.TextPrimary;
         _devicesGrid.RowsDefaultCellStyle.BackColor = AppTheme.Surface;
+        _devicesGrid.RowsDefaultCellStyle.SelectionBackColor = AppTheme.SelectedRow;
+        _devicesGrid.RowsDefaultCellStyle.SelectionForeColor = AppTheme.TextPrimary;
         _devicesGrid.AlternatingRowsDefaultCellStyle.BackColor = AppTheme.Surface;
+        _devicesGrid.AlternatingRowsDefaultCellStyle.SelectionBackColor = AppTheme.SelectedRow;
+        _devicesGrid.AlternatingRowsDefaultCellStyle.SelectionForeColor = AppTheme.TextPrimary;
+        foreach (DataGridViewRow row in _devicesGrid.Rows)
+        {
+            row.DefaultCellStyle.BackColor = AppTheme.Surface;
+            row.DefaultCellStyle.ForeColor = AppTheme.TextPrimary;
+            row.DefaultCellStyle.SelectionBackColor = AppTheme.SelectedRow;
+            row.DefaultCellStyle.SelectionForeColor = AppTheme.TextPrimary;
+        }
+
         _devicesGrid.Invalidate();
     }
 
@@ -895,6 +949,9 @@ public sealed class MainForm : Form
         {
             return;
         }
+
+        style.SelectionBackColor = AppTheme.SelectedRow;
+        style.SelectionForeColor = AppTheme.TextPrimary;
 
         if (value is "已启用" or "正在播放")
         {
@@ -1634,8 +1691,7 @@ public sealed class MainForm : Form
 
     private void AppendLog(string message)
     {
-        var line = $"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}";
-        _logTextBox.Text = line + _logTextBox.Text;
+        _logTextBox.AddLine($"[{DateTime.Now:HH:mm:ss}] {message}");
     }
 
     private void RunOnUiThread(Action action)
