@@ -38,6 +38,8 @@ public sealed class MainForm : Form
     private static readonly TimeSpan AudioProfileResetSettleDelay = TimeSpan.FromMilliseconds(1800);
     private static readonly TimeSpan DeviceStatusRefreshInterval = TimeSpan.FromSeconds(4);
     private static readonly TimeSpan ConnectingStateTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ReconnectAttemptDelay = TimeSpan.FromMilliseconds(1800);
+    private const int ForceReconnectAttempts = 4;
 
     private readonly Dictionary<string, AudioPlaybackConnection> _connections = new();
     private readonly BindingSource _devicesSource = new();
@@ -743,53 +745,100 @@ public sealed class MainForm : Form
             }
         }
 
-        var connection = await EnsureConnectionStartedAsync(device);
-        if (connection is null)
-        {
-            return false;
-        }
+        return await OpenDeviceWithAttemptsAsync(device, forceReconnect ? ForceReconnectAttempts : 1);
+    }
 
-        try
+    private async Task<bool> OpenDeviceWithAttemptsAsync(RemoteAudioDevice device, int maxAttempts)
+    {
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            var openResult = await connection.OpenAsync();
-            if (!IsActiveConnection(device.Id, connection))
+            var isLastAttempt = attempt == maxAttempts;
+            var connection = await EnsureConnectionStartedAsync(device, showFailureStatus: isLastAttempt);
+            if (connection is null)
             {
-                AppendLog($"打开操作已取消：{device.DisplayName} 已断开。");
+                if (!isLastAttempt)
+                {
+                    device = await PrepareReconnectRetryAsync(device, attempt, maxAttempts, "启用音频接收失败");
+                    continue;
+                }
+
                 return false;
             }
 
-            if (openResult.Status == AudioPlaybackConnectionOpenResultStatus.Success)
+            try
             {
-                device.ConnectionState = "Opened";
-                UpdateStatus($"已打开音频接收：{device.DisplayName}");
-                AppendLog($"OpenAsync 成功：{device.DisplayName}");
-                UpdateTrayText($"已连接 {device.DisplayName}");
-                return true;
-            }
+                var openResult = await connection.OpenAsync();
+                if (!IsActiveConnection(device.Id, connection))
+                {
+                    AppendLog($"打开操作已取消：{device.DisplayName} 已断开。");
+                    if (!isLastAttempt)
+                    {
+                        device = await PrepareReconnectRetryAsync(device, attempt, maxAttempts, "打开音频接收被系统取消");
+                        continue;
+                    }
 
-            device.ConnectionState = $"打开失败：{openResult.Status}";
-            UpdateStatus($"打开失败：{openResult.Status}");
-            AppendLog($"OpenAsync 失败：{device.DisplayName}，状态 {openResult.Status}");
-            if (forceReconnect)
-            {
-                ReleaseConnection(device.Id, updateStatus: false);
+                    return false;
+                }
+
+                if (openResult.Status == AudioPlaybackConnectionOpenResultStatus.Success)
+                {
+                    device.ConnectionState = "Opened";
+                    UpdateStatus($"已打开音频接收：{device.DisplayName}");
+                    AppendLog($"OpenAsync 成功：{device.DisplayName}");
+                    UpdateTrayText($"已连接 {device.DisplayName}");
+                    return true;
+                }
+
                 device.ConnectionState = $"打开失败：{openResult.Status}";
-            }
-
-            return false;
-        }
-        catch (Exception ex)
-        {
-            if (IsActiveConnection(device.Id, connection))
-            {
+                AppendLog($"OpenAsync 失败：{device.DisplayName}，状态 {openResult.Status}");
                 ReleaseConnection(device.Id, updateStatus: false);
-                device.ConnectionState = "打开异常";
-            }
 
-            UpdateStatus("打开音频连接时出现异常。");
-            AppendLog($"OpenAsync 异常：{ex.Message}");
-            return false;
+                if (!isLastAttempt)
+                {
+                    device = await PrepareReconnectRetryAsync(device, attempt, maxAttempts, $"打开失败：{openResult.Status}");
+                    continue;
+                }
+
+                device.ConnectionState = $"打开失败：{openResult.Status}";
+                UpdateStatus($"打开失败：{openResult.Status}");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                if (IsActiveConnection(device.Id, connection))
+                {
+                    ReleaseConnection(device.Id, updateStatus: false);
+                }
+
+                AppendLog($"OpenAsync 异常：{ex.Message}");
+                if (!isLastAttempt)
+                {
+                    device = await PrepareReconnectRetryAsync(device, attempt, maxAttempts, "打开音频连接异常");
+                    continue;
+                }
+
+                device.ConnectionState = "打开异常";
+                UpdateStatus("打开音频连接时出现异常。");
+                return false;
+            }
         }
+
+        return false;
+    }
+
+    private async Task<RemoteAudioDevice> PrepareReconnectRetryAsync(
+        RemoteAudioDevice device,
+        int attempt,
+        int maxAttempts,
+        string reason)
+    {
+        ReleaseConnection(device.Id, updateStatus: false);
+        device.ConnectionState = "正在连接";
+        var nextAttempt = attempt + 1;
+        UpdateStatus($"{reason}，等待系统蓝牙音频恢复后重试（{nextAttempt}/{maxAttempts}）：{device.DisplayName}");
+        AppendLog($"{reason}，等待系统蓝牙音频恢复后重试（{nextAttempt}/{maxAttempts}）：{device.DisplayName}");
+        await Task.Delay(ReconnectAttemptDelay);
+        return await RefreshAudioDeviceAsync(device) ?? device;
     }
 
     private void StopRelayButton_Click(object? sender, EventArgs e)
@@ -1178,7 +1227,7 @@ public sealed class MainForm : Form
         return new string(value.Where(static ch => !char.IsWhiteSpace(ch)).ToArray()).ToUpperInvariant();
     }
 
-    private async Task<AudioPlaybackConnection?> EnsureConnectionStartedAsync(RemoteAudioDevice device)
+    private async Task<AudioPlaybackConnection?> EnsureConnectionStartedAsync(RemoteAudioDevice device, bool showFailureStatus = true)
     {
         if (_connections.TryGetValue(device.Id, out var existingConnection))
         {
@@ -1244,7 +1293,11 @@ public sealed class MainForm : Form
         {
             AppendLog($"StartAsync 异常：{ex.Message}");
             ReleaseConnection(device.Id, updateStatus: false);
-            UpdateStatus("启用音频接收失败。");
+            if (showFailureStatus)
+            {
+                UpdateStatus("启用音频接收失败。");
+            }
+
             return null;
         }
     }

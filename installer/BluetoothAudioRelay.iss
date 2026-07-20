@@ -1,5 +1,5 @@
 #define MyAppName "蓝牙音频中继"
-#define MyAppVersion "0.3.5"
+#define MyAppVersion "0.3.6"
 #define MyAppPublisher "BluetoothAudioRelay"
 #define MyAppExeName "BluetoothAudioRelay.exe"
 
