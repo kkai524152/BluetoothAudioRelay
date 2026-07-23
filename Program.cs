@@ -118,6 +118,7 @@ public sealed class MainForm : Form
     private readonly SemaphoreSlim _connectionGate = new(1, 1);
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly HashSet<string> _profileRecoveryRequiredDeviceKeys = new(StringComparer.OrdinalIgnoreCase);
+    private readonly AutoReconnectBudget _autoReconnectBudget = new();
     private readonly bool _startInBackground;
     private AudioOutputMonitor? _audioOutputMonitor;
     private CancellationTokenSource? _connectionOperationCancellation;
@@ -128,7 +129,6 @@ public sealed class MainForm : Form
     private bool _isDeviceStatusRefreshRunning;
     private bool _isConnectionOperationRunning;
     private bool _autoConnectSuppressed;
-    private int _autoReconnectFailures;
     private string _defaultOutputName = "正在检测默认输出...";
 
     public MainForm(bool startInBackground = false)
@@ -747,6 +747,10 @@ public sealed class MainForm : Form
                 {
                     CancelAutoReconnect();
                 }
+                else
+                {
+                    ResetAutoReconnectBudget();
+                }
 
                 SavePreferences();
                 if (_preferences.AutoConnectEnabled)
@@ -1232,19 +1236,35 @@ public sealed class MainForm : Form
         bool allowProfileRecovery,
         bool automatic)
     {
-        if (!device.IsAvailable || _exitRequested)
+        if (_exitRequested)
         {
             return false;
         }
 
+        if (!device.IsAvailable)
+        {
+            if (automatic &&
+                !_autoConnectSuppressed &&
+                !_lifetimeCancellation.IsCancellationRequested)
+            {
+                RecordAutoReconnectFailure(device);
+            }
+
+            return false;
+        }
+
         if (automatic &&
-            (!_preferences.AutoConnectEnabled || _autoConnectSuppressed || _isConnectionOperationRunning))
+            (!_preferences.AutoConnectEnabled ||
+             _autoConnectSuppressed ||
+             _autoReconnectBudget.IsExhausted ||
+             _isConnectionOperationRunning))
         {
             return false;
         }
 
         if (!automatic)
         {
+            ResetAutoReconnectBudget(device, "用户发起快速连接");
             _autoConnectSuppressed = false;
             CancelAutoReconnect();
             CancelConnectionOperation();
@@ -1430,9 +1450,12 @@ public sealed class MainForm : Form
                 _connectionOperationCancellation = null;
             }
 
-            if (automatic && !succeeded && !_lifetimeCancellation.IsCancellationRequested)
+            if (automatic &&
+                !succeeded &&
+                !operationCancellation.IsCancellationRequested &&
+                !_lifetimeCancellation.IsCancellationRequested)
             {
-                _autoReconnectFailures++;
+                RecordAutoReconnectFailure(device);
             }
         }
     }
@@ -1469,7 +1492,7 @@ public sealed class MainForm : Form
                         UpdateStatus($"已打开音频接收：{device.DisplayName}", StatusKind.Success);
                         AppendLog($"直连成功：{device.DisplayName}，尝试 {attempt}/{maxAttempts}");
                         UpdateTrayText($"已连接 {device.DisplayName}");
-                        _autoReconnectFailures = 0;
+                        ResetAutoReconnectBudget();
                         return new ConnectionAttemptResult(true, device, null);
                     }
                     else
@@ -1588,6 +1611,7 @@ public sealed class MainForm : Form
             var existing = _devices.FirstOrDefault(item => BluetoothDeviceIdentity.Matches(item, deviceInfo));
             if (existing is not null)
             {
+                var wasAvailable = existing.IsAvailable;
                 var previousId = existing.Id;
                 if (!previousId.Equals(deviceInfo.Id, StringComparison.OrdinalIgnoreCase))
                 {
@@ -1595,6 +1619,7 @@ public sealed class MainForm : Form
                 }
 
                 BluetoothDeviceIdentity.Update(existing, deviceInfo);
+                ResetAutoReconnectBudgetForReappearedDevice(existing, wasAvailable);
                 UpdateDeviceCount();
                 ScheduleAutoConnect(InitialAutoConnectDelay);
                 return;
@@ -1602,6 +1627,7 @@ public sealed class MainForm : Form
 
             var device = BluetoothDeviceIdentity.Create(deviceInfo);
             _devices.Add(device);
+            ResetAutoReconnectBudgetForReappearedDevice(device, wasAvailable: false);
             UpdateDeviceCount();
             AppendLog($"发现设备：{device.DisplayName}");
             ScheduleAutoConnect(InitialAutoConnectDelay);
@@ -1712,7 +1738,9 @@ public sealed class MainForm : Form
             {
                 UpdateStatus(
                     state == AudioPlaybackConnectionState.Closed
-                        ? $"设备已断开：{device.DisplayName}，等待自动重连。"
+                        ? _autoReconnectBudget.IsExhausted
+                            ? $"设备已断开：{device.DisplayName}，请手动执行快速连接。"
+                            : $"设备已断开：{device.DisplayName}，等待自动重连。"
                         : $"当前连接状态：{device.DisplayName} -> {state}",
                     state == AudioPlaybackConnectionState.Opened ? StatusKind.Success : StatusKind.Progress);
             }
@@ -1761,6 +1789,7 @@ public sealed class MainForm : Form
             var existing = _devices.FirstOrDefault(item => BluetoothDeviceIdentity.Matches(item, info));
             if (existing is not null)
             {
+                var wasAvailable = existing.IsAvailable;
                 var previousId = existing.Id;
                 if (!previousId.Equals(info.Id, StringComparison.OrdinalIgnoreCase))
                 {
@@ -1768,10 +1797,13 @@ public sealed class MainForm : Form
                 }
 
                 BluetoothDeviceIdentity.Update(existing, info);
+                ResetAutoReconnectBudgetForReappearedDevice(existing, wasAvailable);
                 continue;
             }
 
-            _devices.Add(BluetoothDeviceIdentity.Create(info));
+            var addedDevice = BluetoothDeviceIdentity.Create(info);
+            _devices.Add(addedDevice);
+            ResetAutoReconnectBudgetForReappearedDevice(addedDevice, wasAvailable: false);
         }
 
         foreach (var device in _devices.ToList())
@@ -2215,7 +2247,7 @@ public sealed class MainForm : Form
         _preferences.PreferredDeviceName = device.DisplayName;
         _preferences.PreferredDeviceNeedsProfileRecovery = IsProfileRecoveryRequired(device);
         _autoConnectSuppressed = false;
-        _autoReconnectFailures = 0;
+        ResetAutoReconnectBudget();
         SavePreferences();
         SelectDevice(device);
         if (changed)
@@ -2287,10 +2319,59 @@ public sealed class MainForm : Form
         }
     }
 
+    private void RecordAutoReconnectFailure(RemoteAudioDevice device)
+    {
+        var wasExhausted = _autoReconnectBudget.IsExhausted;
+        _autoReconnectBudget.RecordFailure();
+        if (wasExhausted || !_autoReconnectBudget.IsExhausted)
+        {
+            return;
+        }
+
+        AppendLog(
+            $"自动重连已达到一轮上限（每轮最多 {DirectConnectAttempts} 次）：{device.DisplayName}，" +
+            "等待设备重新出现或用户手动快速连接。");
+        UpdateStatus(
+            $"自动重连已暂停：{device.DisplayName}，请打开手机蓝牙后执行快速连接。",
+            StatusKind.Error);
+        UpdateTrayText("等待手动连接");
+    }
+
+    private void ResetAutoReconnectBudget(RemoteAudioDevice? device = null, string? reason = null)
+    {
+        var wasExhausted = _autoReconnectBudget.IsExhausted;
+        if (!_autoReconnectBudget.Reset() || !wasExhausted || device is null || string.IsNullOrWhiteSpace(reason))
+        {
+            return;
+        }
+
+        AppendLog($"{reason}，已解除自动重连暂停：{device.DisplayName}");
+    }
+
+    private void ResetAutoReconnectBudgetForReappearedDevice(
+        RemoteAudioDevice device,
+        bool wasAvailable)
+    {
+        if (wasAvailable ||
+            !_preferences.AutoConnectEnabled ||
+            _autoConnectSuppressed ||
+            !_autoReconnectBudget.IsExhausted ||
+            !BluetoothDeviceIdentity.MatchesPreference(
+                device,
+                _preferences.PreferredDeviceKey,
+                _preferences.PreferredDeviceName))
+        {
+            return;
+        }
+
+        ResetAutoReconnectBudget(device, "检测到首选设备重新出现");
+    }
+
     private void ScheduleAutoConnect(TimeSpan delay)
     {
         if (!_preferences.AutoConnectEnabled ||
             _autoConnectSuppressed ||
+            _autoReconnectBudget.IsExhausted ||
             _exitRequested ||
             _lifetimeCancellation.IsCancellationRequested ||
             _isConnectionOperationRunning ||
@@ -2334,7 +2415,7 @@ public sealed class MainForm : Form
             {
                 connected = await OpenDeviceAsync(
                     device,
-                    allowProfileRecovery: _autoReconnectFailures >= 2,
+                    allowProfileRecovery: false,
                     automatic: true);
             }
         }
@@ -2352,7 +2433,11 @@ public sealed class MainForm : Form
             cancellation.Dispose();
         }
 
-        if (!connected && !canceled && !_lifetimeCancellation.IsCancellationRequested && !_autoConnectSuppressed)
+        if (!connected &&
+            !canceled &&
+            !_lifetimeCancellation.IsCancellationRequested &&
+            !_autoConnectSuppressed &&
+            !_autoReconnectBudget.IsExhausted)
         {
             ScheduleAutoConnect(GetAutoReconnectDelay());
         }
@@ -2360,7 +2445,7 @@ public sealed class MainForm : Form
 
     private TimeSpan GetAutoReconnectDelay()
     {
-        var seconds = Math.Min(30, Math.Pow(2, Math.Clamp(_autoReconnectFailures, 1, 5)));
+        var seconds = Math.Min(30, Math.Pow(2, Math.Clamp(_autoReconnectBudget.FailedRounds, 1, 5)));
         return TimeSpan.FromSeconds(seconds);
     }
 
