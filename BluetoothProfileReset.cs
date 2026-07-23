@@ -2,7 +2,10 @@ using System.Runtime.InteropServices;
 
 namespace BluetoothAudioRelay;
 
-internal sealed record BluetoothProfileResetResult(bool Success, string Message);
+internal sealed record BluetoothProfileResetResult(
+    bool Success,
+    string Message,
+    bool DeviceFound = false);
 
 internal static class BluetoothProfileReset
 {
@@ -14,12 +17,156 @@ internal static class BluetoothProfileReset
 
     private static readonly Guid AudioSourceServiceClass = new("0000110a-0000-1000-8000-00805f9b34fb");
 
-    public static BluetoothProfileResetResult TryResetAudioSourceService(string deviceName)
+    private sealed record NameResolutionResult(bool Success, ulong Address, string Message);
+
+    public static BluetoothProfileResetResult TryResetAudioSourceService(string deviceName, ulong? bluetoothAddress)
+    {
+        if (string.IsNullOrWhiteSpace(deviceName) && bluetoothAddress is null)
+        {
+            return new BluetoothProfileResetResult(
+                false,
+                "蓝牙音频服务重置跳过：设备名称和蓝牙地址均为空。");
+        }
+
+        BluetoothProfileResetResult? addressResult = null;
+        if (bluetoothAddress is not null)
+        {
+            addressResult = TryResetByAddress(deviceName, bluetoothAddress.Value);
+            if (addressResult.Success || addressResult.DeviceFound || string.IsNullOrWhiteSpace(deviceName))
+            {
+                return addressResult;
+            }
+        }
+
+        var nameResolution = TryResolveUniqueExactNameAddress(deviceName);
+        if (!nameResolution.Success)
+        {
+            return addressResult is null
+                ? new BluetoothProfileResetResult(false, nameResolution.Message)
+                : addressResult with { Message = $"{addressResult.Message} {nameResolution.Message}" };
+        }
+
+        var nameResult = TryResetByAddress(deviceName, nameResolution.Address);
+        return nameResult with
+        {
+            Message = $"已通过唯一精确设备名定位 {deviceName}（{FormatAddress(nameResolution.Address)}）。{nameResult.Message}"
+        };
+    }
+
+    private static NameResolutionResult TryResolveUniqueExactNameAddress(string deviceName)
     {
         if (string.IsNullOrWhiteSpace(deviceName))
         {
-            return new BluetoothProfileResetResult(false, "蓝牙音频服务重置跳过：设备名称为空。");
+            return new NameResolutionResult(false, 0, "蓝牙音频服务重置跳过：设备名称为空。");
         }
+
+        var radioParams = new BluetoothFindRadioParams
+        {
+            DwSize = Marshal.SizeOf<BluetoothFindRadioParams>()
+        };
+        var radioFindHandle = BluetoothFindFirstRadio(ref radioParams, out var radioHandle);
+        if (radioFindHandle == IntPtr.Zero)
+        {
+            return new NameResolutionResult(
+                false,
+                0,
+                $"蓝牙音频服务重置跳过：未找到本机蓝牙适配器，错误 {Marshal.GetLastWin32Error()}。");
+        }
+
+        var candidates = new List<(ulong Address, string? Name)>();
+        try
+        {
+            do
+            {
+                try
+                {
+                    CollectPairedDevices(radioHandle, candidates);
+                }
+                finally
+                {
+                    CloseHandle(radioHandle);
+                }
+            }
+            while (BluetoothFindNextRadio(radioFindHandle, out radioHandle));
+        }
+        finally
+        {
+            BluetoothFindRadioClose(radioFindHandle);
+        }
+
+        var matches = FindExactNameMatchAddresses(candidates, deviceName);
+        if (matches.Count == 1)
+        {
+            return new NameResolutionResult(true, matches[0], "");
+        }
+
+        return matches.Count == 0
+            ? new NameResolutionResult(
+                false,
+                0,
+                $"蓝牙音频服务重置跳过：未找到名称完全匹配的已配对设备 {deviceName}。")
+            : new NameResolutionResult(
+                false,
+                0,
+                $"蓝牙音频服务重置跳过：发现 {matches.Count} 台同名蓝牙设备，为避免误操作未执行重置。");
+    }
+
+    private static void CollectPairedDevices(
+        IntPtr radioHandle,
+        ICollection<(ulong Address, string? Name)> candidates)
+    {
+        var searchParams = new BluetoothDeviceSearchParams
+        {
+            DwSize = Marshal.SizeOf<BluetoothDeviceSearchParams>(),
+            ReturnAuthenticated = true,
+            ReturnRemembered = true,
+            ReturnUnknown = false,
+            ReturnConnected = true,
+            IssueInquiry = false,
+            TimeoutMultiplier = 2,
+            Radio = radioHandle
+        };
+        var deviceInfo = CreateDeviceInfo();
+        var deviceFindHandle = BluetoothFindFirstDevice(ref searchParams, ref deviceInfo);
+        if (deviceFindHandle == IntPtr.Zero)
+        {
+            return;
+        }
+
+        try
+        {
+            do
+            {
+                candidates.Add((deviceInfo.Address, deviceInfo.Name));
+                deviceInfo = CreateDeviceInfo();
+            }
+            while (BluetoothFindNextDevice(deviceFindHandle, ref deviceInfo));
+        }
+        finally
+        {
+            BluetoothFindDeviceClose(deviceFindHandle);
+        }
+    }
+
+    internal static IReadOnlyList<ulong> FindExactNameMatchAddresses(
+        IEnumerable<(ulong Address, string? Name)> candidates,
+        string? deviceName)
+    {
+        var target = BluetoothDeviceIdentity.NormalizeName(deviceName);
+        if (target.Length == 0)
+        {
+            return [];
+        }
+
+        return candidates
+            .Where(candidate => BluetoothDeviceIdentity.NormalizeName(candidate.Name) == target)
+            .GroupBy(candidate => CanonicalAddress(candidate.Address))
+            .Select(group => group.First().Address)
+            .ToArray();
+    }
+
+    private static BluetoothProfileResetResult TryResetByAddress(string deviceName, ulong bluetoothAddress)
+    {
 
         var radioParams = new BluetoothFindRadioParams
         {
@@ -38,8 +185,8 @@ internal static class BluetoothProfileReset
             {
                 try
                 {
-                    var result = TryResetOnRadio(radioHandle, deviceName);
-                    if (result.Success || result.Message.Contains("已找到设备", StringComparison.Ordinal))
+                    var result = TryResetOnRadio(radioHandle, deviceName, bluetoothAddress);
+                    if (result.Success || result.DeviceFound)
                     {
                         return result;
                     }
@@ -56,10 +203,15 @@ internal static class BluetoothProfileReset
             BluetoothFindRadioClose(radioFindHandle);
         }
 
-        return new BluetoothProfileResetResult(false, $"蓝牙音频服务重置跳过：未在已配对设备中找到 {deviceName}。");
+        return new BluetoothProfileResetResult(
+            false,
+            $"蓝牙音频服务重置跳过：未在已配对设备中找到 {deviceName}（{FormatAddress(bluetoothAddress)}）。");
     }
 
-    private static BluetoothProfileResetResult TryResetOnRadio(IntPtr radioHandle, string deviceName)
+    private static BluetoothProfileResetResult TryResetOnRadio(
+        IntPtr radioHandle,
+        string deviceName,
+        ulong bluetoothAddress)
     {
         var searchParams = new BluetoothDeviceSearchParams
         {
@@ -84,7 +236,7 @@ internal static class BluetoothProfileReset
         {
             do
             {
-                if (!IsDeviceNameMatch(deviceInfo.Name, deviceName))
+                if (!IsAddressMatch(deviceInfo.Address, bluetoothAddress))
                 {
                     deviceInfo = CreateDeviceInfo();
                     continue;
@@ -111,19 +263,22 @@ internal static class BluetoothProfileReset
                 {
                     return new BluetoothProfileResetResult(
                         true,
-                        $"已重置 {deviceInfo.Name} 的蓝牙音频服务：disable={FormatCode(disableCode)}, enable={FormatCode(enableCode)}。");
+                        $"已重置 {deviceInfo.Name} 的蓝牙音频服务：disable={FormatCode(disableCode)}, enable={FormatCode(enableCode)}。",
+                        true);
                 }
 
                 if (disableCode == ErrorServiceDoesNotExist || enableCode == ErrorServiceDoesNotExist)
                 {
                     return new BluetoothProfileResetResult(
                         false,
-                        $"已找到设备 {deviceInfo.Name}，但系统报告手机不支持 Audio Source 服务：disable={FormatCode(disableCode)}, enable={FormatCode(enableCode)}。");
+                        $"已找到设备 {deviceInfo.Name}，但系统报告手机不支持 Audio Source 服务：disable={FormatCode(disableCode)}, enable={FormatCode(enableCode)}。",
+                        true);
                 }
 
                 return new BluetoothProfileResetResult(
                     false,
-                    $"已找到设备 {deviceInfo.Name}，但蓝牙音频服务重置失败：disable={FormatCode(disableCode)}, enable={FormatCode(enableCode)}。");
+                    $"已找到设备 {deviceInfo.Name}，但蓝牙音频服务重置失败：disable={FormatCode(disableCode)}, enable={FormatCode(enableCode)}。",
+                    true);
             }
             while (BluetoothFindNextDevice(deviceFindHandle, ref deviceInfo));
         }
@@ -132,7 +287,9 @@ internal static class BluetoothProfileReset
             BluetoothFindDeviceClose(deviceFindHandle);
         }
 
-        return new BluetoothProfileResetResult(false, $"蓝牙音频服务重置跳过：当前蓝牙适配器下未找到 {deviceName}。");
+        return new BluetoothProfileResetResult(
+            false,
+            $"蓝牙音频服务重置跳过：当前蓝牙适配器下未找到 {deviceName}（{FormatAddress(bluetoothAddress)}）。");
     }
 
     private static BluetoothDeviceInfo CreateDeviceInfo()
@@ -159,24 +316,31 @@ internal static class BluetoothProfileReset
         };
     }
 
-    private static bool IsDeviceNameMatch(string? candidate, string target)
+    private static string FormatAddress(ulong address)
     {
-        var normalizedCandidate = NormalizeDeviceName(candidate);
-        var normalizedTarget = NormalizeDeviceName(target);
-        return normalizedCandidate.Length > 0 &&
-               (normalizedCandidate == normalizedTarget ||
-                normalizedCandidate.Contains(normalizedTarget, StringComparison.Ordinal) ||
-                normalizedTarget.Contains(normalizedCandidate, StringComparison.Ordinal));
+        var value = address.ToString("X12");
+        return $"**:**:**:{value[6..8]}:{value[8..10]}:{value[10..12]}";
     }
 
-    private static string NormalizeDeviceName(string? value)
+    internal static bool IsAddressMatch(ulong candidate, ulong target)
     {
-        if (string.IsNullOrWhiteSpace(value))
+        return candidate == target || ReverseBluetoothAddress(candidate) == target;
+    }
+
+    private static ulong CanonicalAddress(ulong address)
+    {
+        return Math.Min(address, ReverseBluetoothAddress(address));
+    }
+
+    private static ulong ReverseBluetoothAddress(ulong address)
+    {
+        ulong reversed = 0;
+        for (var index = 0; index < 6; index++)
         {
-            return string.Empty;
+            reversed = (reversed << 8) | ((address >> (index * 8)) & 0xff);
         }
 
-        return new string(value.Where(static ch => !char.IsWhiteSpace(ch)).ToArray()).ToUpperInvariant();
+        return reversed;
     }
 
     [StructLayout(LayoutKind.Sequential)]

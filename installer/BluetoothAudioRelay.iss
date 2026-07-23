@@ -1,5 +1,7 @@
 #define MyAppName "蓝牙音频中继"
-#define MyAppVersion "0.4.8"
+#ifndef MyAppVersion
+#define MyAppVersion "0.5.2"
+#endif
 #define MyAppPublisher "BluetoothAudioRelay"
 #define MyAppExeName "BluetoothAudioRelay.exe"
 
@@ -46,6 +48,15 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
 begin
+  if FileExists(ExpandConstant('{app}\{#MyAppExeName}')) then
+  begin
+    { Use a non-blocking launch so an older version's modal single-instance
+      message cannot stall an upgrade before the compatibility fallback. }
+    Exec(ExpandConstant('{app}\{#MyAppExeName}'), '--shutdown', '', SW_HIDE, ewNoWait, ResultCode);
+    Sleep(1200);
+  end;
+
+  { Compatibility fallback when upgrading a version older than 0.5.0. }
   Exec(ExpandConstant('{cmd}'), '/C taskkill /IM {#MyAppExeName} /F >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Result := '';
 end;

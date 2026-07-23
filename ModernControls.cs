@@ -517,6 +517,11 @@ internal sealed class ThemedLogBox : Control
         Invalidate();
     }
 
+    public IReadOnlyList<string> GetLinesChronological()
+    {
+        return _lines.AsEnumerable().Reverse().ToArray();
+    }
+
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         base.OnMouseWheel(e);

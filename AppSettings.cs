@@ -13,9 +13,25 @@ internal enum ThemePreference
 
 internal sealed class UserPreferences
 {
+    public int SchemaVersion { get; set; } = 3;
+
     public ThemePreference ThemePreference { get; set; } = ThemePreference.System;
 
     public string AccentKey { get; set; } = AccentPalettes.Default.Key;
+
+    public string? PreferredDeviceKey { get; set; }
+
+    public string? PreferredDeviceName { get; set; }
+
+    public bool PreferredDeviceNeedsProfileRecovery { get; set; }
+
+    public bool AutoConnectEnabled { get; set; } = true;
+
+    public bool StartWithWindows { get; set; }
+
+    public bool QuietNotifications { get; set; }
+
+    public DateTime? LastUpdateCheckUtc { get; set; }
 }
 
 internal static class UserPreferencesStore
@@ -55,7 +71,10 @@ internal static class UserPreferencesStore
     {
         try
         {
-            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(preferences, JsonOptions));
+            var settingsPath = SettingsPath;
+            var temporaryPath = settingsPath + ".tmp";
+            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(preferences, JsonOptions));
+            File.Move(temporaryPath, settingsPath, overwrite: true);
         }
         catch
         {
